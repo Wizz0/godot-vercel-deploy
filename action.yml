@@ -1,0 +1,192 @@
+name: 'Godot Vercel Deploy'
+description: 'Deploy your Godot HTML5 game to Vercel preview/production environments'
+author: 'Wizz0'
+
+branding:
+  icon: 'upload-cloud'
+  color: 'purple'
+
+inputs:
+  godot_version:
+    description: 'Godot version to use (e.g., 4.5.1)'
+    required: false
+    default: '4.5.1'
+  
+  project_path:
+    description: 'Path to your Godot project folder'
+    required: false
+    default: '.'
+  
+  export_preset:
+    description: 'Name of your HTML5 export preset'
+    required: false
+    default: 'Web'
+  
+  export_path:
+    description: 'Relative path where exported files will be stored'
+    required: false
+    default: './vercel-deploy'
+  
+  vercel_token:
+    description: 'Vercel API token'
+    required: true
+  
+  vercel_org_id:
+    description: 'Vercel organization ID'
+    required: true
+  
+  vercel_project_id:
+    description: 'Vercel project ID'
+    required: true
+  
+  production:
+    description: 'Deploy to production (true) or preview (false)'
+    required: false
+    default: 'false'
+  
+  vercel_project_name:
+    description: 'Vercel project name (for generating preview URLs)'
+    required: false
+    default: ''
+  
+  custom_config:
+    description: 'Custom vercel.json configuration (JSON string)'
+    required: false
+    default: ''
+
+outputs:
+  url:
+    description: 'URL of the deployed game'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: 📥 Checkout repository
+      uses: actions/checkout@v4
+
+    - name: 🔧 Setup Godot
+      shell: bash
+      run: |
+        # Download Godot executable
+        GODOT_VERSION="${{ inputs.godot_version }}"
+        wget -q "https://downloads.godotengine.org/?version=${GODOT_VERSION}&flavor=stable&slug=linux.x86_64.zip&platform=linux.64" -O godot.zip
+        unzip -q godot.zip
+        chmod +x Godot_*-linux.x86_64
+        mv Godot_*-linux.x86_64 godot
+        
+        # Download export templates
+        wget -q "https://downloads.godotengine.org/?version=${GODOT_VERSION}&flavor=stable&slug=export_templates.tpz&platform=templates" -O templates.tpz
+        mkdir -p ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+        unzip -q templates.tpz -d ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+        mv ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable/templates/* ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable/
+        
+        echo "✅ Godot ${GODOT_VERSION} installed"
+
+    - name: 🎮 Export HTML5 game
+      shell: bash
+      working-directory: ${{ inputs.project_path }}
+      run: |
+        EXPORT_PATH="${{ inputs.export_path }}"
+        mkdir -p "${EXPORT_PATH}"
+        
+        # Export the game
+        ../godot --headless --export-release "${{ inputs.export_preset }}" "${EXPORT_PATH}/game.html"
+        
+        # Check export results
+        if [ ! -f "${EXPORT_PATH}/game.html" ]; then
+          echo "❌ Export failed - game.html not found"
+          exit 1
+        fi
+        
+        echo "✅ Game exported successfully to ${EXPORT_PATH}"
+
+    - name: ⚙️ Create Vercel configuration
+      shell: bash
+      working-directory: ${{ inputs.project_path }}/${{ inputs.export_path }}
+      run: |
+        if [ -n "${{ inputs.custom_config }}" ]; then
+          # Use custom configuration
+          echo "${{ inputs.custom_config }}" > vercel.json
+        else
+          # Generate default configuration for Godot
+          HTML_FILE=$(ls *.html 2>/dev/null | head -n 1)
+          if [ -z "$HTML_FILE" ]; then
+            HTML_FILE="game.html"
+          fi
+          
+          cat > vercel.json << EOF
+        {
+          "rewrites": [
+            { 
+              "source": "/(.*)", 
+              "destination": "/${HTML_FILE}"
+            }
+          ],
+          "headers": [
+            {
+              "source": "/(.*)",
+              "headers": [
+                { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
+                { "key": "Cross-Origin-Embedder-Policy", "value": "require-corp" }
+              ]
+            },
+            {
+              "source": "/(.*).wasm",
+              "headers": [
+                { "key": "Content-Type", "value": "application/wasm" }
+              ]
+            },
+            {
+              "source": "/(.*).pck",
+              "headers": [
+                { "key": "Content-Type", "value": "application/octet-stream" }
+              ]
+            }
+          ]
+        }
+        EOF
+        fi
+        
+        echo "✅ vercel.json created:"
+        cat vercel.json
+
+    - name: 🌐 Deploy to Vercel
+      id: deploy
+      shell: bash
+      working-directory: ${{ inputs.project_path }}/${{ inputs.export_path }}
+      env:
+        VERCEL_TOKEN: ${{ inputs.vercel_token }}
+        VERCEL_ORG_ID: ${{ inputs.vercel_org_id }}
+        VERCEL_PROJECT_ID: ${{ inputs.vercel_project_id }}
+      run: |
+        # Install Vercel CLI
+        npm install -g vercel
+        
+        # Deploy to Vercel
+        DEPLOY_ARGS="--token=${VERCEL_TOKEN} --yes"
+        
+        if [ "${{ inputs.production }}" == "true" ]; then
+          DEPLOY_ARGS="${DEPLOY_ARGS} --prod"
+        fi
+        
+        # Deploy and capture output
+        DEPLOY_OUTPUT=$(vercel deploy . ${DEPLOY_ARGS} 2>&1)
+        echo "${DEPLOY_OUTPUT}"
+        
+        # Extract URL from output
+        DEPLOY_URL=$(echo "${DEPLOY_OUTPUT}" | grep -o 'https://[^ ]*\.vercel\.app' | head -n 1)
+        
+        if [ -z "${DEPLOY_URL}" ]; then
+          # Fallback URL generation
+          if [ "${{ inputs.production }}" == "true" ]; then
+            DEPLOY_URL="https://${{ inputs.vercel_project_name }}.vercel.app"
+          else
+            BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}"
+            CLEAN_BRANCH=$(echo "$BRANCH" | sed 's/[^a-zA-Z0-9]/-/g' | tr '[:upper:]' '[:lower:]')
+            DEPLOY_URL="https://${{ inputs.vercel_project_name }}-git-${CLEAN_BRANCH}-${GITHUB_SHA:0:8}.vercel.app"
+          fi
+        fi
+        
+        # Set output
+        echo "url=${DEPLOY_URL}" >> $GITHUB_OUTPUT
+        echo "✅ Deployed to: ${DEPLOY_URL}"
