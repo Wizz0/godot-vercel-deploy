@@ -1,0 +1,9 @@
+[gd_scene load_steps=3 format=3 uid="uid://m0ni15l5d8sd"]
+
+[ext_resource type="Texture2D" uid="uid://n4v84xw0iyue" path="res://icon.svg" id="1_ic0qq"]
+[ext_resource type="Script" uid="uid://nkxdwfe2hsio" path="res://godot_sprite.gd" id="2_7j6n0"]
+
+[node name="GodotSprite" type="Sprite2D"]
+position = Vector2(560, 321)
+texture = ExtResource("1_ic0qq")
+script = ExtResource("2_7j6n0")
