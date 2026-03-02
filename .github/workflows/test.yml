@@ -1,0 +1,36 @@
+name: Deploy Test Game
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+      
+      - name: 🎮 Deploy Godot game to Vercel
+        id: deploy
+        uses: ./
+        with:
+          godot_version: '4.5.1'
+          project_path: './test_game'
+          export_preset: 'Web'
+          export_path: './vercel-deploy'
+          vercel_token: ${{ secrets.VERCEL_TOKEN }}
+          vercel_org_id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel_project_id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel_project_name: 'test-game'
+          production: ${{ github.ref == 'refs/heads/main' }}
+      
+      - name: 🔗 Show deployment URL
+        run: |
+          echo "=================================="
+          echo "🎮 Game deployed successfully!"
+          echo "📱 URL: ${{ steps.deploy.outputs.url }}"
+          echo "=================================="
